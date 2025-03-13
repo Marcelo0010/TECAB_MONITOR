@@ -52,6 +52,7 @@ df["tipo_da_operacao"] = df["tipo_da_operacao"].map({
 
 # Criando o Dash
 app = dash.Dash(__name__)
+server = app.server  
 app.layout = html.Div([
     html.H1("MONITORAMENTO TECAB - SINDALCOOL"),
     html.H3(f"Última atualização: {data_atualizacao}"),
@@ -126,3 +127,4 @@ def update_tipo_operacao(produto, tipo_operacao, sentido_operacao):
 
 if __name__ == "__main__":
     app.run_server(debug=True)
+    
