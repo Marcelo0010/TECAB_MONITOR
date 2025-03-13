@@ -2,6 +2,7 @@ import pandas as pd
 import dash
 from dash import dcc, html, dash_table, Input, Output
 import plotly.express as px
+import gunicorn
 
 # URL do Google Sheets (compartilhado publicamente como CSV)
 SHEET_ID = "119rDrAyWfXNEp70WdmgvA7OMEbbNX1wZ"
