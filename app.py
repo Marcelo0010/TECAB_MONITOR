@@ -126,5 +126,5 @@ def update_tipo_operacao(produto, tipo_operacao, sentido_operacao):
     return fig, table_data
 
 if __name__ == "__main__":
-    app.run_server(debug=True)
+    app.run_server(debug=False)
     
