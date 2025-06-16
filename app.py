@@ -540,7 +540,8 @@ def update_stacked_bar_chart(stored_data):
     return fig
 
 
+server = app.server  
 
 if __name__ == "__main__":
-    app.run_server(debug=False)
+    app.run_server(debug=True, port=8050)
     
