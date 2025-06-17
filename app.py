@@ -23,7 +23,7 @@ def load_and_preprocess_data(url):
     # Renomear colunas
     df.rename(columns={
         "Atualizado em: mes_de_referencia": "mes_de_referencia",
-        "Histórico dos volumes mensais movimentados no terminal  Em atendimento ao artigo 26, III, d, da Resolução ANP nº 881, de 8 de julho de 2022 nome_do_terminal": "nome_terminal"
+        "Histórico dos volumes mensais movimentados no terminal: Em atendimento ao artigo 26, III, d, da Resolução ANP nº 881, de 8 de julho de 2022 da maioria das Distribuidoras"
     }, inplace=True)
     
     # Mapear valores
