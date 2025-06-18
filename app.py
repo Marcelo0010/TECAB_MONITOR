@@ -104,23 +104,33 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "Dashboard de Movimentação de Combustíveis"
 
 # Layout do aplicativo
-
-
-app.layout = dbc.Container(fluid=True,style={
-        'backgroundColor': '#f8f9fa',  # Cinza claro (você pode usar cores hex, RGB ou nomes)
+app.layout = dbc.Container(
+    fluid=True,
+    style={
+        'backgroundColor': '#f8f9fa',
         'padding': '20px',
-        'minHeight': '100vh',  # Garante que o fundo cubra toda a tela
-    }, children=[
-    # Cabeçalho com data de atualização
-    dbc.Row(
-        dbc.Col(
-            html.H4(f"Última atualização: {data_atualizacao}", 
-                    className="text-end text-muted my-2"),
-            width={"size": 4, "offset": 8}
-        )
+        'minHeight': '100vh',
+    },
+    children=[
+        # TÍTULO
+        html.H1(
+            "Dashboard de Movimentação de Combustíveis",
+            className="text-center my-3"
+        ),
+
+        # DATA DE ATUALIZAÇÃO
+        html.H6(
+            f"Última atualização: {data_atualizacao}",
+            className="text-center text-muted mb-1"
+        ),
+
+        # MÊS DE REFERÊNCIA
+        html.H6(
+            f"Mês de referência: {kpis['latest_month']}",
+            className="text-center text-muted mb-3"
     ),
-    
-    html.Hr(),
+
+     html.Hr(),
     
     # Seção de KPIs
     dbc.Row([
