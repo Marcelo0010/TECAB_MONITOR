@@ -11,70 +11,95 @@ import numpy as np
 # CONFIG GOOGLE SHEETS
 # =========================
 
-SHEET_ID = "119rDrAyWfXNEp70WdmgvA7OMEbbNX1wZ"
+SHEET_ID = "119rDrAyWfXNEp70WdmgvA7OMEbbNX1wZ" 
 SHEET_NAME = "Dados"
 URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}"
 
 # =========================
 # ROBUST DATA LOADER
 # =========================
-
 def load_and_preprocess_data(url):
 
+    # carregar bruto
     raw = pd.read_csv(url, header=None)
 
-    header_row = raw[raw.apply(
-        lambda r: r.astype(str).str.contains("mes_de_referencia").any(),
-        axis=1
-    )].index[0]
+    # encontrar linha onde começa o header verdadeiro
+    header_row = raw[
+        raw.apply(
+            lambda r: r.astype(str)
+            .str.contains("mes_de_referencia", case=False)
+            .any(),
+            axis=1
+        )
+    ].index[0]
 
+    # recarregar usando header correto
     df = pd.read_csv(url, skiprows=header_row)
 
     df.columns = df.columns.str.strip()
 
+    # data atualização
     data_atualizacao = raw.iloc[0,0]
 
-    df['mes_de_referencia'] = pd.to_datetime(
-        df['mes_de_referencia'],
-        errors='coerce'
+    # garantir que coluna existe
+    if "mes_de_referencia" not in df.columns:
+        raise Exception(f"Colunas encontradas: {df.columns}")
+
+    # converter data
+    df["mes_de_referencia"] = pd.to_datetime(
+        df["mes_de_referencia"],
+        errors="coerce"
     )
 
-    df['volume_m3'] = (
-        df['volume_m3']
+    # converter volume
+    df["volume_m3"] = (
+        df["volume_m3"]
         .astype(str)
-        .str.replace('.', '', regex=False)
-        .str.replace(',', '.', regex=False)
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
     )
 
-    df['volume_m3'] = pd.to_numeric(df['volume_m3'], errors='coerce').fillna(0)
+    df["volume_m3"] = pd.to_numeric(
+        df["volume_m3"],
+        errors="coerce"
+    ).fillna(0)
 
-    df['sentido_da_operacao'] = df['sentido_da_operacao'].map({
-        1:"Recepção",
-        2:"Entrega"
+    # mapear
+    df["sentido_da_operacao"] = df["sentido_da_operacao"].map({
+        1: "Recepção",
+        2: "Entrega"
     })
 
-    df['tipo_da_operacao'] = df['tipo_da_operacao'].map({
-        1:"Com armazenagem",
-        2:"Sem armazenagem",
-        3:"Transbordo",
-        4:"Abastecimento",
-        9:"Outros"
+    df["tipo_da_operacao"] = df["tipo_da_operacao"].map({
+        1: "Com armazenagem",
+        2: "Sem armazenagem",
+        3: "Transbordo",
+        4: "Abastecimento",
+        9: "Outros"
     })
 
-    df['ano'] = df['mes_de_referencia'].dt.year
-    df['mes'] = df['mes_de_referencia'].dt.month
+    df["ano"] = df["mes_de_referencia"].dt.year
+    df["mes"] = df["mes_de_referencia"].dt.month
 
-    df_etanol = df[df['descricao_do_produto'].astype(str).str.contains("ETANOL", na=False)]
+    df_etanol = df[
+        df["descricao_do_produto"]
+        .astype(str)
+        .str.contains("ETANOL", na=False)
+    ]
 
-    df_outros = df[~df['descricao_do_produto'].astype(str).str.contains("ETANOL", na=False)]
+    df_outros = df[
+        ~df["descricao_do_produto"]
+        .astype(str)
+        .str.contains("ETANOL", na=False)
+    ]
 
-    df_resumo_outros = df_outros.groupby([
-        "mes_de_referencia",
-        "descricao_do_produto",
-        "sentido_da_operacao"
-    ])["volume_m3"].sum().reset_index()
+    df_resumo_outros = df_outros.groupby(
+        ["mes_de_referencia","descricao_do_produto","sentido_da_operacao"]
+    )["volume_m3"].sum().reset_index()
 
     return df, data_atualizacao, df_etanol, df_resumo_outros
+
+
 
 # =========================
 # LOAD DATA
@@ -512,4 +537,5 @@ if __name__ == '__main__':
         port=8050,
         debug=False
     )
+
 
