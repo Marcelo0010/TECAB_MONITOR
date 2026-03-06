@@ -1,8 +1,7 @@
-dash_bootstrap_components
 dash
 pandas
 plotly
+dash-bootstrap-components
 gunicorn
 numpy
-
-
+openpyxl
