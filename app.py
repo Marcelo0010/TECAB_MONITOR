@@ -1,325 +1,285 @@
+# APP V2 TECAB DASHBOARD (PART 1/3)
+# Imports
 import pandas as pd
 import dash
-from dash import dcc, html, dash_table, Input, Output
+from dash import dcc, html, dash_table, Input, Output, State
 import plotly.express as px
 import dash_bootstrap_components as dbc
+import numpy as np
 
-# ==========================================
+# =========================
 # CONFIG GOOGLE SHEETS
-# ==========================================
+# =========================
 
 SHEET_ID = "119rDrAyWfXNEp70WdmgvA7OMEbbNX1wZ"
 SHEET_NAME = "Dados"
-
 URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}"
 
-# ==========================================
-# LOAD DATA
-# ==========================================
+# =========================
+# ROBUST DATA LOADER
+# =========================
 
-def load_data():
+def load_and_preprocess_data(url):
 
-    first_row = pd.read_csv(URL, nrows=1, header=None)
-    data_atualizacao = first_row.iloc[0,1] if first_row.shape[1] > 1 else ""
+    raw = pd.read_csv(url, header=None)
 
-    df = pd.read_csv(URL, skiprows=2)
+    header_row = raw[raw.apply(
+        lambda r: r.astype(str).str.contains("mes_de_referencia").any(),
+        axis=1
+    )].index[0]
+
+    df = pd.read_csv(url, skiprows=header_row)
 
     df.columns = df.columns.str.strip()
 
-    df["mes_de_referencia"] = pd.to_datetime(df["mes_de_referencia"], errors="coerce")
+    data_atualizacao = raw.iloc[0,0]
 
-    df["volume_m3"] = (
-        df["volume_m3"]
-        .astype(str)
-        .str.replace(".", "", regex=False)
-        .str.replace(",", ".", regex=False)
+    df['mes_de_referencia'] = pd.to_datetime(
+        df['mes_de_referencia'],
+        errors='coerce'
     )
 
-    df["volume_m3"] = pd.to_numeric(df["volume_m3"], errors="coerce").fillna(0)
+    df['volume_m3'] = (
+        df['volume_m3']
+        .astype(str)
+        .str.replace('.', '', regex=False)
+        .str.replace(',', '.', regex=False)
+    )
 
-    df["sentido_da_operacao"] = df["sentido_da_operacao"].map({
-        1: "Recepção",
-        2: "Entrega"
+    df['volume_m3'] = pd.to_numeric(df['volume_m3'], errors='coerce').fillna(0)
+
+    df['sentido_da_operacao'] = df['sentido_da_operacao'].map({
+        1:"Recepção",
+        2:"Entrega"
     })
 
-    df["tipo_da_operacao"] = df["tipo_da_operacao"].map({
-        1: "Com armazenagem",
-        2: "Sem armazenagem",
-        3: "Transbordo",
-        4: "Abastecimento",
-        9: "Outros"
+    df['tipo_da_operacao'] = df['tipo_da_operacao'].map({
+        1:"Com armazenagem",
+        2:"Sem armazenagem",
+        3:"Transbordo",
+        4:"Abastecimento",
+        9:"Outros"
     })
 
-    df["modo_de_transporte"] = df["modo_de_transporte"].map({
-        1: "Rodoviário",
-        2: "Ferroviário",
-        4: "Aquaviário",
-        5: "Dutoviário",
-        9: "Outros"
-    })
+    df['ano'] = df['mes_de_referencia'].dt.year
+    df['mes'] = df['mes_de_referencia'].dt.month
 
-    return df, data_atualizacao
+    df_etanol = df[df['descricao_do_produto'].astype(str).str.contains("ETANOL", na=False)]
 
+    df_outros = df[~df['descricao_do_produto'].astype(str).str.contains("ETANOL", na=False)]
 
-# ==========================================
-# ANALYTICS
-# ==========================================
+    df_resumo_outros = df_outros.groupby([
+        "mes_de_referencia",
+        "descricao_do_produto",
+        "sentido_da_operacao"
+    ])["volume_m3"].sum().reset_index()
 
-def calculate_kpis(df):
+    return df, data_atualizacao, df_etanol, df_resumo_outros
 
-    latest = df["mes_de_referencia"].max()
-    previous = latest - pd.DateOffset(months=1)
+# =========================
+# LOAD DATA
+# =========================
 
-    df_latest = df[df["mes_de_referencia"] == latest]
-    df_prev = df[df["mes_de_referencia"] == previous]
+df, data_atualizacao, df_etanol, df_resumo_outros = load_and_preprocess_data(URL)
 
-    total_latest = df_latest["volume_m3"].sum()
-    total_prev = df_prev["volume_m3"].sum()
+# =========================
+# KPI CALCULATIONS
+# =========================
 
-    growth = ((total_latest-total_prev)/total_prev*100) if total_prev > 0 else 0
+def calculate_kpis(df_data):
 
-    etanol = df[df["descricao_do_produto"].str.contains("ETANOL", na=False)]
+    latest_month = df_data['mes_de_referencia'].max()
 
-    etanol_rec = etanol[etanol["sentido_da_operacao"]=="Recepção"]["volume_m3"].sum()
-    etanol_ent = etanol[etanol["sentido_da_operacao"]=="Entrega"]["volume_m3"].sum()
+    previous_month = latest_month - pd.DateOffset(months=1)
+
+    df_latest = df_data[df_data['mes_de_referencia'] == latest_month]
+
+    df_previous = df_data[df_data['mes_de_referencia'] == previous_month]
+
+    total_volume_latest = df_latest['volume_m3'].sum()
+
+    total_volume_previous = df_previous['volume_m3'].sum()
+
+    etanol_recepcao_latest = df_latest[
+        df_latest['descricao_do_produto'].astype(str).str.contains("ETANOL", na=False) &
+        (df_latest['sentido_da_operacao']=="Recepção")
+    ]['volume_m3'].sum()
+
+    etanol_entrega_latest = df_latest[
+        df_latest['descricao_do_produto'].astype(str).str.contains("ETANOL", na=False) &
+        (df_latest['sentido_da_operacao']=="Entrega")
+    ]['volume_m3'].sum()
+
+    growth_total = ((total_volume_latest-total_volume_previous)/total_volume_previous*100) if total_volume_previous>0 else 0
 
     return {
-
-        "latest_month": latest.strftime("%B/%Y"),
-
-        "total_volume": total_latest,
-
-        "growth_total": growth,
-
-        "etanol_recebido": etanol_rec,
-
-        "etanol_entregue": etanol_ent
-
+        "total_volume": total_volume_latest,
+        "growth_total": growth_total,
+        "etanol_recepcao": etanol_recepcao_latest,
+        "etanol_entrega": etanol_entrega_latest,
+        "latest_month": latest_month.strftime("%B/%Y") if pd.notna(latest_month) else ""
     }
-
-
-# ==========================================
-# LOAD DATA
-# ==========================================
-
-df, data_atualizacao = load_data()
 
 kpis = calculate_kpis(df)
 
-# ==========================================
+# =========================
 # DASH APP
-# ==========================================
+# =========================
 
-app = dash.Dash(
-    __name__,
-    external_stylesheets=[dbc.themes.BOOTSTRAP]
-)
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app.title = "Dashboard TECAB V2"
 
 server = app.server
 
-
-# ==========================================
-# LAYOUT
-# ==========================================
+# =========================
+# LAYOUT (PART 1)
+# =========================
 
 app.layout = dbc.Container([
 
-    html.H1(
-        "Dashboard de Movimentação de Combustíveis - TECAB",
-        className="text-center my-3"
-    ),
+html.H1("Dashboard de Movimentação de Combustíveis - TECAB",className="text-center my-3"),
 
-    html.H6(
-        f"Última atualização: {data_atualizacao}",
-        className="text-center text-muted"
-    ),
+html.H6(f"Última atualização: {data_atualizacao}",className="text-center text-muted"),
 
-    html.H6(
-        f"Mês de referência: {kpis['latest_month']}",
-        className="text-center text-muted mb-3"
-    ),
+html.H6(f"Mês de referência: {kpis['latest_month']}",className="text-center text-muted mb-3"),
 
-    html.Hr(),
+html.Hr(),
 
-    dbc.Row([
+# KPI ROW
 
-        dbc.Col(dbc.Card([
-            dbc.CardHeader("Volume Total Movimentado"),
-            dbc.CardBody(html.H2(f"{kpis['total_volume']:,.0f} m³", className="text-center"))
-        ]), md=4),
+dbc.Row([
 
-        dbc.Col(dbc.Card([
-            dbc.CardHeader("Etanol Recebido"),
-            dbc.CardBody(html.H2(f"{kpis['etanol_recebido']:,.0f} m³", className="text-center"))
-        ]), md=4),
+    dbc.Col(dbc.Card([
+        dbc.CardHeader("Volume Total Movimentado"),
+        dbc.CardBody([
+            html.H2(f"{kpis['total_volume']:,.0f} m³",className="text-center"),
+            html.P(f"Crescimento: {kpis['growth_total']:.2f}%",className="text-center")
+        ])
+    ]),md=4),
 
-        dbc.Col(dbc.Card([
-            dbc.CardHeader("Etanol Entregue"),
-            dbc.CardBody(html.H2(f"{kpis['etanol_entregue']:,.0f} m³", className="text-center"))
-        ]), md=4)
+    dbc.Col(dbc.Card([
+        dbc.CardHeader("Etanol Recebido"),
+        dbc.CardBody([
+            html.H2(f"{kpis['etanol_recepcao']:,.0f} m³",className="text-center")
+        ])
+    ]),md=4),
 
-    ], className="mb-4"),
+    dbc.Col(dbc.Card([
+        dbc.CardHeader("Etanol Entregue"),
+        dbc.CardBody([
+            html.H2(f"{kpis['etanol_entrega']:,.0f} m³",className="text-center")
+        ])
+    ]),md=4)
 
-    dbc.Tabs([
+]),
 
-        dbc.Tab(label="Histórico Geral", children=[
+html.Br(),
 
-            dcc.Graph(id="grafico-historico"),
+# MAIN TABS
 
-            dbc.Row([
+dbc.Tabs([
 
-                dbc.Col(dcc.Graph(id="grafico-produto-share"), md=6),
+    dbc.Tab(label="Visão Geral Etanol",children=[
 
-                dbc.Col(dcc.Graph(id="grafico-operacao"), md=6)
+        dbc.Row([
 
-            ])
+            dbc.Col(dcc.Graph(id="graph-etanol-recebido"),md=6),
 
-        ]),
+            dbc.Col(dcc.Graph(id="graph-etanol-entregue"),md=6)
 
-        dbc.Tab(label="Logística", children=[
+        ])
 
-            dcc.Graph(id="grafico-transporte")
+    ]),
 
-        ]),
+    dbc.Tab(label="Análise Avançada",children=[
 
-        dbc.Tab(label="Sazonalidade", children=[
+        dbc.Row([
 
-            dcc.Graph(id="grafico-sazonal")
+            dbc.Col(dcc.Graph(id="grafico-yoy"),md=6),
 
-        ]),
-
-        dbc.Tab(label="Ranking Produtos", children=[
-
-            dcc.Graph(id="grafico-ranking")
+            dbc.Col(dcc.Graph(id="grafico-ytd"),md=6)
 
         ]),
 
-        dbc.Tab(label="Base de Dados", children=[
+        dbc.Row([
 
-            dash_table.DataTable(
+            dbc.Col(dcc.Graph(id="grafico-heatmap"),md=6),
 
-                data=df.to_dict("records"),
-
-                columns=[{"name": i, "id": i} for i in df.columns],
-
-                page_size=20,
-
-                filter_action="native",
-
-                sort_action="native",
-
-                export_format="csv",
-
-                style_table={"overflowX":"auto"},
-
-                style_header={
-                    "backgroundColor":"#2c3e50",
-                    "color":"white"
-                }
-
-            )
+            dbc.Col(dcc.Graph(id="grafico-share-produtos"),md=6)
 
         ])
 
     ])
 
-], fluid=True)
+]),
 
+# STORE
 
-# ==========================================
-# CALLBACKS
-# ==========================================
+dcc.Store(id='filtered-data-store')
+
+],fluid=True)
+
+# =========================
+# CALLBACKS (PART 2)
+# =========================
+
+# -------- ETANOL RECEBIDO / ENTREGUE --------
 
 @app.callback(
-    Output("grafico-historico","figure"),
-    Input("grafico-historico","id")
+    Output("graph-etanol-recebido","figure"),
+    Input("main-tabs","active_tab")
 )
-def historico(_):
+def update_etanol_recebido(_):
 
-    data = df.groupby("mes_de_referencia")["volume_m3"].sum().reset_index()
+    df_recebido = df_etanol[df_etanol["sentido_da_operacao"]=="Recepção"]
+
+    data = df_recebido.groupby("mes_de_referencia")["volume_m3"].sum().reset_index()
 
     fig = px.line(
         data,
         x="mes_de_referencia",
         y="volume_m3",
         markers=True,
-        title="Movimentação Mensal do Terminal"
+        title="Volume de Etanol Recebido (m³)"
     )
+
+    fig.update_layout(template="plotly_white",hovermode="x unified")
 
     return fig
 
 
 @app.callback(
-    Output("grafico-produto-share","figure"),
-    Input("grafico-produto-share","id")
+    Output("graph-etanol-entregue","figure"),
+    Input("main-tabs","active_tab")
 )
-def share(_):
+def update_etanol_entregue(_):
 
-    data = df.groupby("descricao_do_produto")["volume_m3"].sum().reset_index()
+    df_entregue = df_etanol[df_etanol["sentido_da_operacao"]=="Entrega"]
 
-    fig = px.pie(
+    data = df_entregue.groupby("mes_de_referencia")["volume_m3"].sum().reset_index()
+
+    fig = px.line(
         data,
-        values="volume_m3",
-        names="descricao_do_produto",
-        hole=0.4,
-        title="Participação por Produto"
-    )
-
-    return fig
-
-
-@app.callback(
-    Output("grafico-operacao","figure"),
-    Input("grafico-operacao","id")
-)
-def operacao(_):
-
-    data = df.groupby("tipo_da_operacao")["volume_m3"].sum().reset_index()
-
-    fig = px.bar(
-        data,
-        x="tipo_da_operacao",
+        x="mes_de_referencia",
         y="volume_m3",
-        title="Volume por Tipo de Operação"
+        markers=True,
+        title="Volume de Etanol Entregue (m³)"
     )
+
+    fig.update_layout(template="plotly_white",hovermode="x unified")
 
     return fig
 
 
-@app.callback(
-    Output("grafico-transporte","figure"),
-    Input("grafico-transporte","id")
-)
-def transporte(_):
-
-    data = df.groupby(
-        ["modo_de_transporte","descricao_do_produto"]
-    )["volume_m3"].sum().reset_index()
-
-    fig = px.bar(
-        data,
-        x="modo_de_transporte",
-        y="volume_m3",
-        color="descricao_do_produto",
-        barmode="stack",
-        title="Logística por Modal de Transporte"
-    )
-
-    return fig
-
+# -------- YOY ANALYSIS --------
 
 @app.callback(
-    Output("grafico-sazonal","figure"),
-    Input("grafico-sazonal","id")
+    Output("grafico-yoy","figure"),
+    Input("main-tabs","active_tab")
 )
-def sazonal(_):
+def update_yoy(_):
 
-    df_temp = df.copy()
-
-    df_temp["ano"] = df_temp["mes_de_referencia"].dt.year
-    df_temp["mes"] = df_temp["mes_de_referencia"].dt.month
-
-    data = df_temp.groupby(["ano","mes"])["volume_m3"].sum().reset_index()
+    data = df.groupby(["ano","mes"])["volume_m3"].sum().reset_index()
 
     fig = px.line(
         data,
@@ -327,43 +287,229 @@ def sazonal(_):
         y="volume_m3",
         color="ano",
         markers=True,
-        title="Sazonalidade da Movimentação"
+        title="Comparação Anual da Movimentação"
+    )
+
+    fig.update_layout(template="plotly_white")
+
+    return fig
+
+
+# -------- YTD --------
+
+@app.callback(
+    Output("grafico-ytd","figure"),
+    Input("main-tabs","active_tab")
+)
+def update_ytd(_):
+
+    data = df.groupby(["ano","mes"])["volume_m3"].sum().reset_index()
+
+    data["ytd"] = data.groupby("ano")["volume_m3"].cumsum()
+
+    fig = px.line(
+        data,
+        x="mes",
+        y="ytd",
+        color="ano",
+        markers=True,
+        title="Volume Acumulado no Ano (YTD)"
+    )
+
+    fig.update_layout(template="plotly_white")
+
+    return fig
+
+
+# -------- HEATMAP SAZONAL --------
+
+@app.callback(
+    Output("grafico-heatmap","figure"),
+    Input("main-tabs","active_tab")
+)
+def update_heatmap(_):
+
+    data = df.groupby(["ano","mes"])["volume_m3"].sum().reset_index()
+
+    pivot = data.pivot(index="ano",columns="mes",values="volume_m3")
+
+    fig = px.imshow(
+        pivot,
+        aspect="auto",
+        color_continuous_scale="YlOrRd",
+        title="Heatmap de Sazonalidade"
     )
 
     return fig
 
 
+# -------- PARTICIPAÇÃO PRODUTOS --------
+
 @app.callback(
-    Output("grafico-ranking","figure"),
-    Input("grafico-ranking","id")
+    Output("grafico-share-produtos","figure"),
+    Input("main-tabs","active_tab")
 )
-def ranking(_):
+def update_share(_):
+
+    data = df.groupby("descricao_do_produto")["volume_m3"].sum().reset_index()
+
+    fig = px.pie(
+        data,
+        values="volume_m3",
+        names="descricao_do_produto",
+        hole=0.5,
+        title="Participação dos Produtos"
+    )
+
+    return fig
+
+
+# =========================
+# CALLBACKS (PART 3)
+# =========================
+
+# -------- ANÁLISE DETALHADA / FILTROS --------
+
+@app.callback(
+    Output('filtered-data-store','data'),
+    [Input('graph-etanol-recebido','id')]
+)
+def initialize_store(_):
+
+    # inicializa store com dataset completo
+    return df.to_dict('records')
+
+
+@app.callback(
+    Output('filtered-data-store','data', allow_duplicate=True),
+    [Input('filtered-data-store','data')],
+    prevent_initial_call=True
+)
+def refresh_store(data):
+
+    # placeholder para futuras expansões de filtro
+    return data
+
+
+# -------- RANKING DE PRODUTOS --------
+
+@app.callback(
+    Output('ranking-produtos','figure'),
+    Input('main-tabs','active_tab'),
+    prevent_initial_call=True
+)
+def update_ranking(_):
 
     data = (
-        df.groupby("descricao_do_produto")["volume_m3"]
+        df.groupby('descricao_do_produto')['volume_m3']
         .sum()
         .reset_index()
-        .sort_values("volume_m3",ascending=False)
+        .sort_values('volume_m3',ascending=False)
     )
 
     fig = px.bar(
         data,
-        x="descricao_do_produto",
-        y="volume_m3",
-        title="Ranking de Produtos"
+        x='descricao_do_produto',
+        y='volume_m3',
+        title='Ranking de Produtos Movimentados',
+        color='volume_m3'
     )
+
+    fig.update_layout(template='plotly_white')
 
     return fig
 
 
-# ==========================================
-# RUN
-# ==========================================
+# -------- BARRAS EMPILHADAS GLOBAL --------
 
-if __name__ == "__main__":
+@app.callback(
+    Output('grafico-barras-empilhadas-global','figure'),
+    Input('main-tabs','active_tab'),
+    prevent_initial_call=True
+)
+def update_stacked_global(_):
+
+    data = df.groupby(['mes_de_referencia','tipo_da_operacao'])['volume_m3'].sum().reset_index()
+
+    fig = px.bar(
+        data,
+        x='mes_de_referencia',
+        y='volume_m3',
+        color='tipo_da_operacao',
+        barmode='stack',
+        title='Movimentação por Tipo de Operação'
+    )
+
+    fig.update_layout(template='plotly_white',hovermode='x unified')
+
+    return fig
+
+
+# -------- TABELA ANALÍTICA --------
+
+@app.callback(
+    Output('tabela-analitica','data'),
+    Input('main-tabs','active_tab'),
+    prevent_initial_call=True
+)
+def update_table(_):
+
+    data = (
+        df.groupby(['mes_de_referencia','descricao_do_produto','sentido_da_operacao'])['volume_m3']
+        .sum()
+        .reset_index()
+        .sort_values('mes_de_referencia',ascending=False)
+    )
+
+    return data.to_dict('records')
+
+
+# =========================
+# EXTRA ANALYTICS (TECAB)
+# =========================
+
+# crescimento mensal
+
+def calculate_growth_series():
+
+    data = df.groupby('mes_de_referencia')['volume_m3'].sum().reset_index()
+
+    data['growth_pct'] = data['volume_m3'].pct_change()*100
+
+    return data
+
+
+# share etanol
+
+def calculate_etanol_share():
+
+    total = df.groupby('mes_de_referencia')['volume_m3'].sum()
+
+    etanol = df[df['descricao_do_produto'].str.contains('ETANOL',na=False)]
+
+    etanol = etanol.groupby('mes_de_referencia')['volume_m3'].sum()
+
+    share = (etanol/total*100).reset_index(name='etanol_share')
+
+    return share
+
+
+# =========================
+# SERVER
+# =========================
+
+server = app.server
+
+
+# =========================
+# RUN
+# =========================
+
+if __name__ == '__main__':
 
     app.run_server(
-        host="0.0.0.0",
+        host='0.0.0.0',
         port=8050,
         debug=False
     )
+
