@@ -6,35 +6,42 @@ import dash_bootstrap_components as dbc
 from datetime import datetime
 import numpy as np
 
-# URL do Google Sheets (compartilhado publicamente como CSV)
+# URL do Google Sheets (Alterado para exportação direta em CSV para evitar bloqueios do Render)
 SHEET_ID = "119rDrAyWfXNEp70WdmgvA7OMEbbNX1wZ"
 SHEET_NAME = "Dados"
-URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}"
+URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet={SHEET_NAME}"
 
 # --- Funções de Pré-processamento de Dados ---
 def load_and_preprocess_data(url):
-    # Carregar dados
-    df = pd.read_csv(url, skiprows=0)
+    # Carrega a planilha inteira como texto bruto para não errar o cabeçalho no Render
+    raw_df = pd.read_csv(url, header=None, dtype=str)
     
-    # Extrair data de atualização (primeira linha)
-    first_row = pd.read_csv(url, nrows=1, header=None)
-    data_atualizacao = first_row.iloc[0, 0]
+    # Extrair data de atualização (Célula B1 -> linha 0, coluna 1)
+    data_atualizacao = str(raw_df.iloc[0, 1]) if raw_df.shape[1] > 1 else "Não informada"
     
-    # Renomear colunas
-    df.rename(columns={
-        "Atualizado em: mes_de_referencia": "mes_de_referencia",
-        "Histórico dos volumes mensais movimentados no terminal: Em atendimento ao artigo 26, III, d, da Resolução ANP nº 881, de 8 de julho de 2022 da maioria das Distribuidoras": "mes_de_referencia"
-    }, inplace=True)
+    # Encontrar automaticamente onde está a linha de cabeçalho verdadeira
+    header_idx = 2
+    for i in range(min(10, len(raw_df))):
+        if raw_df.iloc[i].astype(str).str.contains('mes_de_referencia', case=False, na=False).any():
+            header_idx = i
+            break
+            
+    # Configurar o DataFrame definitivo cortando o topo
+    df = raw_df.iloc[header_idx + 1:].copy()
+    df.columns = raw_df.iloc[header_idx].astype(str).str.strip()
     
-    # Mapear valores
-    df["sentido_da_operacao"] = df["sentido_da_operacao"].map({1: "Recepção", 2: "Entrega"})
+    # Remove linhas vazias
+    df = df.dropna(subset=['mes_de_referencia'])
     
     # Converter tipos de dados
     df['mes_de_referencia'] = pd.to_datetime(df['mes_de_referencia'], format='%Y-%m', errors='coerce')
-    df.loc[:, "volume_m3"] = df["volume_m3"].astype(str).str.replace(',', '.').astype(float)
+    df["volume_m3"] = df["volume_m3"].astype(str).str.replace(',', '.').astype(float)
+    
+    # Mapear valores (usando to_numeric antes para garantir que 1 não seja lido como "1" texto)
+    df["sentido_da_operacao"] = pd.to_numeric(df["sentido_da_operacao"], errors='coerce').map({1: "Recepção", 2: "Entrega"})
     
     # Mapear tipo de operação
-    df["tipo_da_operacao"] = df["tipo_da_operacao"].map({
+    df["tipo_da_operacao"] = pd.to_numeric(df["tipo_da_operacao"], errors='coerce').map({
         1: "Com armazenagem",
         2: "Sem armazenagem",
         3: "Transbordo",
@@ -43,6 +50,7 @@ def load_and_preprocess_data(url):
     })
     
     # Filtrar etanol e outros produtos
+    df["descricao_do_produto"] = df["descricao_do_produto"].astype(str)
     df_etanol = df[df["descricao_do_produto"].str.contains("ETANOL", na=False)]
     
     df_outros = df[~df["descricao_do_produto"].str.contains("ETANOL", na=False)]
@@ -86,6 +94,9 @@ def calculate_kpis(df_data):
     growth_recepcao = ((etanol_recepcao_latest - etanol_recepcao_previous) / etanol_recepcao_previous * 100) if etanol_recepcao_previous > 0 else 0
     growth_entrega = ((etanol_entrega_latest - etanol_entrega_previous) / etanol_entrega_previous * 100) if etanol_entrega_previous > 0 else 0
 
+    # Adicionado tratamento para caso o dataset esteja vazio não quebrar o layout
+    mes_str = latest_month.strftime('%B/%Y') if pd.notnull(latest_month) else "Dados indisponíveis"
+
     return {
         'total_volume': total_volume_latest,
         'growth_total': growth_total,
@@ -93,7 +104,7 @@ def calculate_kpis(df_data):
         'growth_recepcao': growth_recepcao,
         'etanol_entrega': etanol_entrega_latest,
         'growth_entrega': growth_entrega,
-        'latest_month': latest_month.strftime('%B/%Y')
+        'latest_month': mes_str
     }
 
 # Calcular KPIs
@@ -102,7 +113,9 @@ kpis = calculate_kpis(df)
 # --- Configuração do Dash App ---
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "Dashboard de Movimentação de Combustíveis"
-server = app.server
+
+# Variável server necessária para o Gunicorn no Render
+server = app.server  
 
 # Layout do aplicativo
 app.layout = dbc.Container(
@@ -220,7 +233,7 @@ app.layout = dbc.Container(
                                 dcc.Dropdown(
                                     id="dropdown-produto",
                                     options=[{"label": prod, "value": prod} for prod in sorted(df["descricao_do_produto"].unique())],
-                                    value="ETANOL",
+                                    value="ETANOL ANIDRO",
                                     clearable=False,
                                     className="mb-3"
                                 ),
@@ -230,7 +243,7 @@ app.layout = dbc.Container(
                                 html.Label("Selecione o Tipo de Operação:", className="fw-bold"),
                                 dcc.Dropdown(
                                     id="dropdown-tipo-operacao",
-                                    options=[{"label": tipo, "value": tipo} for tipo in df["tipo_da_operacao"].unique()],
+                                    options=[{"label": tipo, "value": tipo} for tipo in df["tipo_da_operacao"].dropna().unique()],
                                     value="Com armazenagem",
                                     clearable=False,
                                     className="mb-3"
@@ -241,7 +254,7 @@ app.layout = dbc.Container(
                                 html.Label("Selecione o Sentido da Operação:", className="fw-bold"),
                                 dcc.Dropdown(
                                     id="dropdown-sentido-operacao",
-                                    options=[{"label": sentido, "value": sentido} for sentido in df["sentido_da_operacao"].unique()],
+                                    options=[{"label": sentido, "value": sentido} for sentido in df["sentido_da_operacao"].dropna().unique()],
                                     value="Recepção",
                                     clearable=False,
                                     className="mb-3"
@@ -553,5 +566,3 @@ def update_stacked_bar_chart(stored_data):
 
 if __name__ == "__main__":
     app.run_server(debug=True, port=8050)
-
-
