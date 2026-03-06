@@ -18,32 +18,37 @@ URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sh
 # =========================
 # ROBUST DATA LOADER
 # =========================
+
 def load_and_preprocess_data(url):
 
-    # carregar bruto
-    raw = pd.read_csv(url, header=None)
+    # carregar csv bruto
+    df = pd.read_csv(url, skiprows=1)
 
-    # encontrar linha onde começa o header verdadeiro
-    header_row = raw[
-        raw.apply(
-            lambda r: r.astype(str)
-            .str.contains("mes_de_referencia", case=False)
-            .any(),
-            axis=1
-        )
-    ].index[0]
+    # primeira linha contém data atualização
+    first_row = pd.read_csv(url, nrows=1, header=None)
 
-    # recarregar usando header correto
-    df = pd.read_csv(url, skiprows=header_row)
+    data_atualizacao = first_row.iloc[0,1]
 
-    df.columns = df.columns.str.strip()
+    # corrigir nomes de colunas quebrados
+    df.columns = [c.split()[-1] for c in df.columns]
 
-    # data atualização
-    data_atualizacao = raw.iloc[0,0]
+    # garantir colunas corretas
+    expected_cols = [
+        "mes_de_referencia",
+        "codigo_anp_do_terminal",
+        "nome_do_terminal",
+        "municipio_do_terminal",
+        "uf",
+        "sentido_da_operacao",
+        "tipo_da_operacao",
+        "modo_de_transporte",
+        "codigo_anp_do_produto",
+        "descricao_do_produto",
+        "volume_m3"
+    ]
 
-    # garantir que coluna existe
-    if "mes_de_referencia" not in df.columns:
-        raise Exception(f"Colunas encontradas: {df.columns}")
+    df = df.iloc[:, :len(expected_cols)]
+    df.columns = expected_cols
 
     # converter data
     df["mes_de_referencia"] = pd.to_datetime(
@@ -64,23 +69,25 @@ def load_and_preprocess_data(url):
         errors="coerce"
     ).fillna(0)
 
-    # mapear
+    # mapear códigos
     df["sentido_da_operacao"] = df["sentido_da_operacao"].map({
-        1: "Recepção",
-        2: "Entrega"
+        1:"Recepção",
+        2:"Entrega"
     })
 
     df["tipo_da_operacao"] = df["tipo_da_operacao"].map({
-        1: "Com armazenagem",
-        2: "Sem armazenagem",
-        3: "Transbordo",
-        4: "Abastecimento",
-        9: "Outros"
+        1:"Com armazenagem",
+        2:"Sem armazenagem",
+        3:"Transbordo",
+        4:"Abastecimento",
+        9:"Outros"
     })
 
+    # criar ano e mes
     df["ano"] = df["mes_de_referencia"].dt.year
     df["mes"] = df["mes_de_referencia"].dt.month
 
+    # separar etanol
     df_etanol = df[
         df["descricao_do_produto"]
         .astype(str)
@@ -537,5 +544,6 @@ if __name__ == '__main__':
         port=8050,
         debug=False
     )
+
 
 
